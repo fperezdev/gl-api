@@ -1,5 +1,5 @@
 {
-  "name": "challenge-api",
+  "name": "gl-api",
   "version": "1.0.0",
   "description": "API for challenge by Grupo Lagos",
   "main": "index.js",
