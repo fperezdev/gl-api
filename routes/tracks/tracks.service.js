@@ -1,33 +1,54 @@
 const { getDB } = require("../../db");
 const { redisClient } = require("../../redis");
 
+// Las consultas a la API de Itunes tienen un rate limit de 20 por minuto,
+// así que es importante cachear las respuestas.
+
+const BASE_ITUNES_API_URL = "https://itunes.apple.com";
+const MAX_SONGS_PER_REQUEST = 25;
+const CACHE_EXPIRATION = 60; // 60 segundos
+
 async function get(req, res) {
   const { query } = req;
   const { name } = query;
-  if (!name) return res.status(400).send("Name is required as query parameter");
+  if (!name)
+    return res.status(400).send("Falta un nombre de artista para buscar");
 
+  // Buscar respuesta en caché
   const cacheKey = `get-tracks-${name}`;
-
   const cacheValue = await redisClient.get(cacheKey);
-
   if (cacheValue) return res.status(200).send(JSON.parse(cacheValue));
 
-  console.log("No cache value");
+  // Si no hay caché, se hace la consulta a Itunes Search API
   const itunesResponse = await fetch(
-    `https://itunes.apple.com/search?term=${name}&entity=song&attribute=artistTerm&limit=200`
+    `${BASE_ITUNES_API_URL}/search?term=${name}&entity=song&attribute=artistTerm&limit=${MAX_SONGS_PER_REQUEST}`
   );
-  const itunesResponseBody = await itunesResponse.json();
-  const { results: itunesResults } = itunesResponseBody;
-  if (!itunesResults) return res.status(404).send("Not found");
 
-  // No se puede obtener resultado exacto de nombre de artista con
-  // la Search API de Itunes asi que se filtra acá
+  if (itunesResponse.status < 200 || itunesResponse.status >= 300) {
+    console.log(
+      "Error en consulta a Itunes Search API",
+      name,
+      itunesResponse.status
+    );
+    return res.status(400).send("Consulta mal formada");
+  }
+
+  const itunesResponseBody = await itunesResponse.json();
+
+  if (!itunesResponseBody.results || itunesResponseBody.resultCount === 0)
+    return res.status(404).send("No se encontraron resultados");
+
+  const { results: itunesResults } = itunesResponseBody;
+
   const songs = itunesResults
+    // Asegurarse que el nombre del artista sea exacto
     .filter(
       (result) =>
         result.artistName.trim().toLowerCase() === name.trim().toLowerCase()
     )
-    .slice(0, 25)
+    // La API de Itunes puede retornar más canciones de las que se piden
+    .slice(0, MAX_SONGS_PER_REQUEST)
+    // Parsear los resultados a al formato establecido
     .map((song) => ({
       cancion_id: song.trackId,
       nombre_album: song.collectionName,
@@ -38,8 +59,10 @@ async function get(req, res) {
         valor: song.trackPrice,
         moneda: song.currency,
       },
+      img: song.artworkUrl100,
     }));
 
+  // Lista de álbumes únicos en la respuesta
   const uniqAlbums = [...new Set(songs.map((result) => result.nombre_album))];
 
   const response = {
@@ -49,7 +72,7 @@ async function get(req, res) {
     canciones: songs,
   };
 
-  redisClient.set(cacheKey, JSON.stringify(response), { EX: 60 });
+  redisClient.set(cacheKey, JSON.stringify(response), { EX: CACHE_EXPIRATION });
 
   return res.status(200).send(response);
 }
@@ -59,35 +82,42 @@ async function setFavorite(req, res) {
 
   const { nombre_banda, cancion_id, usuario, ranking } = body;
   if (!nombre_banda || !cancion_id || !usuario || !ranking)
-    return res.status(400).send("Bad request body");
+    return res.status(400).send("Faltan valores en el cuerpo de la consulta");
 
   let rankingNumber = 0;
   try {
     rankingNumber = parseInt(ranking);
   } catch (error) {
-    return res.status(400).send("Bad ranking");
+    return res.status(400).send("El ranking debe ser un número entre 1 y 5");
   }
 
   if (rankingNumber < 1 || rankingNumber > 5)
-    return res.status(400).send("Bad ranking");
+    return res.status(400).send("El ranking debe ser un número entre 1 y 5");
 
+  // Buscar en caché si ya se ha validado esta canción y artista
   const cacheKey = `set-favorite-${cancion_id}-${nombre_banda}`;
-
   const cacheValue = await redisClient.get(cacheKey);
 
   if (!cacheValue) {
-    console.log("No cache value");
-    // Si no hay caché de esta consulta, se valida con Itunes
+    // Si no hay caché de esta consulta, se valida con la API de Itunes
     // que la canción existe y que el artista es el correcto
     const itunesResponse = await fetch(
-      `https://itunes.apple.com/lookup?id=${cancion_id}&entity=song`
+      `${BASE_ITUNES_API_URL}/lookup?id=${cancion_id}&entity=song`
     );
-    if (itunesResponse.status < 200 || itunesResponse.status >= 300)
-      return res.status(400).send("Bad request");
+
+    if (itunesResponse.status < 200 || itunesResponse.status >= 300) {
+      console.log(
+        "Error en consulta a Itunes Lookup API",
+        cancion_id,
+        itunesResponse.status
+      );
+      return res.status(400).send("Consulta mal formada");
+    }
 
     const itunesResponseBody = await itunesResponse.json();
-    if (itunesResponseBody.resultCount === 0)
-      return res.status(404).send("Not found");
+
+    if (!itunesResponseBody.results || itunesResponseBody.resultCount === 0)
+      return res.status(404).send("No se encontraron resultados");
 
     const itunesResult = itunesResponseBody.results[0];
 
@@ -95,18 +125,22 @@ async function setFavorite(req, res) {
       itunesResult.artistName.trim().toLowerCase() !==
       nombre_banda.trim().toLowerCase()
     )
-      return res.status(400).send("Bad artist name");
+      return res
+        .status(400)
+        .send("El nombre del artista no corresponde a la canción");
 
-    redisClient.set(cacheKey, "exists", { EX: 60 });
+    // Cachear validación de canción y artista por 60 segundos
+    redisClient.set(cacheKey, "exists", { EX: CACHE_EXPIRATION });
   }
 
+  // Guardar favorito en base de datos sanitizando las variables
   const db = getDB();
   const insert = db.prepare(
     "INSERT OR REPLACE INTO favorito (cancion_id, nombre_banda, usuario, ranking) VALUES (?, ?, ?, ?)"
   );
-  const result = insert.run(cancion_id, nombre_banda, usuario, rankingNumber);
+  insert.run(cancion_id, nombre_banda, usuario, rankingNumber);
 
-  return res.status(201).send(result);
+  return res.status(201).send("Favorito guardado");
 }
 
 module.exports = {

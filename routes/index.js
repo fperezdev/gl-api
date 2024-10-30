@@ -4,7 +4,7 @@ const trackRouter = require("./tracks/tracks.controller");
 const router = Router();
 
 router.get("/", (_, res) => {
-  res.send("Hi there! This is GL API");
+  res.send("Hola! - GL API");
 });
 
 router.use(trackRouter);
