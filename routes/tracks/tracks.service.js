@@ -1,10 +1,18 @@
 const { getDB } = require("../../db");
+const { redisClient } = require("../../redis");
 
 async function get(req, res) {
   const { query } = req;
   const { name } = query;
   if (!name) return res.status(400).send("Name is required as query parameter");
 
+  const cacheKey = `get-tracks-${name}`;
+
+  const cacheValue = await redisClient.get(cacheKey);
+
+  if (cacheValue) return res.status(200).send(JSON.parse(cacheValue));
+
+  console.log("No cache value");
   const itunesResponse = await fetch(
     `https://itunes.apple.com/search?term=${name}&entity=song&attribute=artistTerm&limit=200`
   );
@@ -41,6 +49,8 @@ async function get(req, res) {
     canciones: songs,
   };
 
+  redisClient.set(cacheKey, JSON.stringify(response), { EX: 60 });
+
   return res.status(200).send(response);
 }
 
@@ -51,23 +61,6 @@ async function setFavorite(req, res) {
   if (!nombre_banda || !cancion_id || !usuario || !ranking)
     return res.status(400).send("Bad request body");
 
-  const itunesResponse = await fetch(
-    `https://itunes.apple.com/lookup?id=${cancion_id}&entity=song`
-  );
-  if (itunesResponse.status < 200 || itunesResponse.status >= 300)
-    return res.status(400).send("Bad request");
-
-  const itunesResponseBody = await itunesResponse.json();
-  if (itunesResponseBody.resultCount === 0)
-    return res.status(404).send("Not found");
-
-  if (
-    itunesResponseBody.results[0].artistName.trim().toLowerCase() !==
-    nombre_banda.trim().toLowerCase()
-  )
-    return res.status(400).send("Bad artist name");
-  // Hasta aquí se valida que la cancion exista y sea del artista correcto
-
   let rankingNumber = 0;
   try {
     rankingNumber = parseInt(ranking);
@@ -77,6 +70,35 @@ async function setFavorite(req, res) {
 
   if (rankingNumber < 1 || rankingNumber > 5)
     return res.status(400).send("Bad ranking");
+
+  const cacheKey = `set-favorite-${cancion_id}-${nombre_banda}`;
+
+  const cacheValue = await redisClient.get(cacheKey);
+
+  if (!cacheValue) {
+    console.log("No cache value");
+    // Si no hay caché de esta consulta, se valida con Itunes
+    // que la canción existe y que el artista es el correcto
+    const itunesResponse = await fetch(
+      `https://itunes.apple.com/lookup?id=${cancion_id}&entity=song`
+    );
+    if (itunesResponse.status < 200 || itunesResponse.status >= 300)
+      return res.status(400).send("Bad request");
+
+    const itunesResponseBody = await itunesResponse.json();
+    if (itunesResponseBody.resultCount === 0)
+      return res.status(404).send("Not found");
+
+    const itunesResult = itunesResponseBody.results[0];
+
+    if (
+      itunesResult.artistName.trim().toLowerCase() !==
+      nombre_banda.trim().toLowerCase()
+    )
+      return res.status(400).send("Bad artist name");
+
+    redisClient.set(cacheKey, "exists", { EX: 60 });
+  }
 
   const db = getDB();
   const insert = db.prepare(

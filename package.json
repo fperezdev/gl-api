@@ -10,7 +10,8 @@
   "author": "fperez",
   "license": "ISC",
   "dependencies": {
-    "express": "^4.21.1"
+    "express": "^4.21.1",
+    "redis": "^4.7.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.7"
