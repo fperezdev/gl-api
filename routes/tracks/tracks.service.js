@@ -1,17 +1,6 @@
-const { getDB } = require("./db.js");
-const express = require("express");
-const app = express();
-const port = 3000;
+const { getDB } = require("../../db");
 
-db = getDB();
-
-app.use(express.json());
-
-app.get("/", (_, res) => {
-  res.send("Hello World!");
-});
-
-app.get("/search_tracks", async (req, res) => {
+async function get(req, res) {
   const { query } = req;
   const { name } = query;
   if (!name) return res.status(400).send("Name is required as query parameter");
@@ -52,10 +41,10 @@ app.get("/search_tracks", async (req, res) => {
     canciones: songs,
   };
 
-  res.status(200).send(response);
-});
+  return res.status(200).send(response);
+}
 
-app.post("/favoritos", async (req, res) => {
+async function setFavorite(req, res) {
   const { body } = req;
 
   const { nombre_banda, cancion_id, usuario, ranking } = body;
@@ -89,14 +78,16 @@ app.post("/favoritos", async (req, res) => {
   if (rankingNumber < 1 || rankingNumber > 5)
     return res.status(400).send("Bad ranking");
 
+  const db = getDB();
   const insert = db.prepare(
     "INSERT OR REPLACE INTO favorito (cancion_id, nombre_banda, usuario, ranking) VALUES (?, ?, ?, ?)"
   );
   const result = insert.run(cancion_id, nombre_banda, usuario, rankingNumber);
 
   return res.status(201).send(result);
-});
+}
 
-app.listen(port, () => {
-  console.log(`Example app listening on port ${port}`);
-});
+module.exports = {
+  get,
+  setFavorite,
+};
