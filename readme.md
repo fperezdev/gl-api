@@ -20,6 +20,8 @@ Se conecta a la API de Itunes para obtener canciones de algún artista y tambié
 
 - Node.js LTS 22.11.0
 - Express
+- SQLite
+- Redis
 
 ---
 
