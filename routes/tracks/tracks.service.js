@@ -134,7 +134,25 @@ async function setFavorite(req, res) {
   return res.status(201).send("Favorito guardado");
 }
 
+async function deleteFavorite(req, res) {
+  const { body } = req;
+
+  const { cancion_id, usuario } = body;
+  if (!cancion_id || !usuario)
+    return res.status(400).send("Faltan valores en el cuerpo de la consulta");
+
+  // Eliminar favorito de base de datos sanitizando las variables
+  const db = getDB();
+  const insert = db.prepare(
+    "DELETE FROM favorito WHERE cancion_id = ? AND usuario = ?"
+  );
+  insert.run(cancion_id, usuario);
+
+  return res.status(200).send("Favorito eliminado");
+}
+
 module.exports = {
   get,
   setFavorite,
+  deleteFavorite,
 };
