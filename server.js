@@ -1,10 +1,11 @@
 const express = require("express");
+const cors = require("cors");
 const router = require("./routes/index.js");
 
-console.log("process.env", process.env.PORT, process.env.REDIS_URL);
 const PORT = process.env.PORT || 3000;
 
 const app = express();
+app.use(cors());
 app.use(express.json());
 app.use(router);
 

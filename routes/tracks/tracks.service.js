@@ -53,6 +53,7 @@ async function get(req, res) {
       cancion_id: song.trackId,
       nombre_album: song.collectionName,
       nombre_tema: song.trackName,
+      nombre_banda: song.artistName,
       preview_url: song.previewUrl,
       fecha_lanzamiento: song.releaseDate,
       precio: {
@@ -83,16 +84,6 @@ async function setFavorite(req, res) {
   const { nombre_banda, cancion_id, usuario, ranking } = body;
   if (!nombre_banda || !cancion_id || !usuario || !ranking)
     return res.status(400).send("Faltan valores en el cuerpo de la consulta");
-
-  let rankingNumber = 0;
-  try {
-    rankingNumber = parseInt(ranking);
-  } catch (error) {
-    return res.status(400).send("El ranking debe ser un número entre 1 y 5");
-  }
-
-  if (rankingNumber < 1 || rankingNumber > 5)
-    return res.status(400).send("El ranking debe ser un número entre 1 y 5");
 
   // Buscar en caché si ya se ha validado esta canción y artista
   const cacheKey = `set-favorite-${cancion_id}-${nombre_banda}`;
@@ -138,7 +129,7 @@ async function setFavorite(req, res) {
   const insert = db.prepare(
     "INSERT OR REPLACE INTO favorito (cancion_id, nombre_banda, usuario, ranking) VALUES (?, ?, ?, ?)"
   );
-  insert.run(cancion_id, nombre_banda, usuario, rankingNumber);
+  insert.run(cancion_id, nombre_banda, usuario, ranking);
 
   return res.status(201).send("Favorito guardado");
 }
